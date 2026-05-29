@@ -22,7 +22,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 import torch
 from langchain_core.prompts import ChatPromptTemplate
 
-TEMP_CHROMA_DIR = "./chroma_db"
+TEMP_CHROMA_DIR = "/tmp/chroma_db"
 os.makedirs(TEMP_CHROMA_DIR, exist_ok=True)
 
 QA_CHAIN = None
@@ -143,9 +143,9 @@ async def init_model(
             
         model_path = model_path.strip().strip('"').strip("'")
         
-        # Save uploaded file
-        os.makedirs("./temp_uploads", exist_ok=True)
-        file_path = f"./temp_uploads/{file.filename}"
+        # Save uploaded file to /tmp (Vercel allows writing to /tmp)
+        os.makedirs("/tmp/temp_uploads", exist_ok=True)
+        file_path = f"/tmp/temp_uploads/{file.filename}"
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
             
