@@ -1,121 +1,46 @@
 import os
-import uuid
+import io
 import shutil
-import json
 import asyncio
 from typing import Optional
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, UploadFile, File, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
-from langchain_classic.chains import create_retrieval_chain
-from langchain_classic.chains.combine_documents import create_stuff_documents_chain
-from langchain_community.llms import LlamaCpp
-from langchain_huggingface import HuggingFacePipeline
-from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
-import torch
+from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_community.vectorstores import FAISS
+from langchain.chains import create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
 
-TEMP_CHROMA_DIR = "/tmp/chroma_db"
-os.makedirs(TEMP_CHROMA_DIR, exist_ok=True)
-
 QA_CHAIN = None
-LLM_INSTANCE = None
-
-def get_embedding_model():
-    return HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-
-def document_loader(file_path):
-    print(f"Loading document: {file_path}")
-    loader = PyPDFLoader(file_path)
-    loaded_document = loader.load()
-    print("Document loaded.")
-    return loaded_document
-
-def text_splitter(data):
-    print("Splitting text into chunks...")
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=100,
-        length_function=len,
-    )
-    chunks = splitter.split_documents(data)
-    print(f"Created {len(chunks)} chunks.")
-    return chunks
-
-def vector_database(chunks):
-    print("Creating vector database...")
-    embedding_model = get_embedding_model()
-    session_id = uuid.uuid4().hex
-    persist_directory = os.path.join(TEMP_CHROMA_DIR, f"vectordb_{session_id}")
-    os.makedirs(persist_directory, exist_ok=True)
-
-    vectordb = Chroma.from_documents(
-        documents=chunks,
-        embedding=embedding_model,
-        persist_directory=persist_directory
-    )
-    print(f"Vector database stored at: {persist_directory}")
-    return vectordb
 
 def initialize_retriever(file_path):
-    print("Initializing retriever...")
-    loaded_doc = document_loader(file_path)
-    chunks = text_splitter(loaded_doc)
-    vectordb = vector_database(chunks)
+    print(f"Loading document: {file_path}")
+    loader = PyPDFLoader(file_path)
+    loaded_doc = loader.load()
+    
+    print("Splitting text...")
+    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+    chunks = splitter.split_documents(loaded_doc)
+    
+    print("Creating in-memory vector database...")
+    # Using OpenAI embeddings
+    embeddings = OpenAIEmbeddings()
+    # Using FAISS in-memory so it works perfectly on Vercel/Render free tier without disk access
+    vectordb = FAISS.from_documents(chunks, embeddings)
+    
     retriever = vectordb.as_retriever(search_kwargs={"k": 3})
-    print("Retriever initialized.")
     return retriever
-
-def load_gguf_model(model_path, temperature, max_tokens):
-    print(f"Loading GGUF model from {model_path}")
-    if not os.path.exists(model_path):
-        raise FileNotFoundError(f"Model path does not exist: {model_path}")
-    
-    llm = LlamaCpp(
-        model_path=model_path,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        n_ctx=2048,
-        n_gpu_layers = -1,
-        stop=["<|im_end|>", "<|im_start|>user", "Question:"],
-        verbose=False,
-    )
-    return llm
-
-def load_hf_model(model_name_or_path, temperature, max_tokens):
-    print(f"Loading HuggingFace model from {model_name_or_path}")
-    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name_or_path, 
-        device_map="auto", 
-        torch_dtype=torch.float16
-    )
-    
-    pipe = pipeline(
-        "text-generation",
-        model=model,
-        tokenizer=tokenizer,
-        max_new_tokens=max_tokens,
-        temperature=temperature,
-        do_sample=temperature > 0,
-    )
-    llm = HuggingFacePipeline(pipeline=pipe)
-    return llm
 
 @asynccontextmanager
 async def lifespan(app_instance):
     yield
-    global QA_CHAIN, LLM_INSTANCE
-    if LLM_INSTANCE is not None:
-        del LLM_INSTANCE
-        LLM_INSTANCE = None
+    global QA_CHAIN
     QA_CHAIN = None
 
 app = FastAPI(lifespan=lifespan)
@@ -131,33 +56,26 @@ async def read_root():
 @app.post("/api/init")
 async def init_model(
     file: UploadFile = File(...),
-    model_type: str = Form(...),
-    model_path: str = Form(...),
-    temperature: float = Form(0.1),
-    max_tokens: int = Form(512)
 ):
-    global QA_CHAIN, LLM_INSTANCE
-    try:
-        if not model_path:
-            return JSONResponse({"status": "error", "message": "Please provide a valid model path."})
-            
-        model_path = model_path.strip().strip('"').strip("'")
+    global QA_CHAIN
+    
+    if not os.environ.get("OPENAI_API_KEY"):
+        return JSONResponse({
+            "status": "error", 
+            "message": "OPENAI_API_KEY environment variable is missing! Please add it in your Vercel/Render dashboard."
+        })
         
-        # Save uploaded file to /tmp (Vercel allows writing to /tmp)
+    try:
+        # Save uploaded file to /tmp (Vercel/Render compatible)
         os.makedirs("/tmp/temp_uploads", exist_ok=True)
         file_path = f"/tmp/temp_uploads/{file.filename}"
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
             
-        print(f"Processing file: {file_path}")
         retriever = initialize_retriever(file_path)
         
-        if model_type == "GGUF":
-            llm = load_gguf_model(model_path, temperature, max_tokens)
-        else:
-            llm = load_hf_model(model_path, temperature, max_tokens)
-
-        LLM_INSTANCE = llm
+        # Use GPT-3.5-Turbo (fast, cheap, works on cloud)
+        llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.1)
 
         system_prompt = (
             "You are a precise, professional assistant. "
@@ -176,11 +94,9 @@ async def init_model(
         document_chain = create_stuff_documents_chain(llm, prompt)
         QA_CHAIN = create_retrieval_chain(retriever, document_chain)
         
-        return {"status": "success", "message": f"Loaded: {file.filename}. Engine: {model_type}. Ready for questions!"}
+        return {"status": "success", "message": f"Loaded: {file.filename}. Cloud AI Engine Ready!"}
 
     except Exception as e:
-        import traceback
-        traceback.print_exc()
         return JSONResponse({"status": "error", "message": str(e)})
 
 @app.post("/api/query")
@@ -190,7 +106,7 @@ async def query_model(request: Request):
     query = data.get("query", "")
     
     if QA_CHAIN is None:
-        return JSONResponse({"status": "error", "message": "Model and document not initialized yet."})
+        return JSONResponse({"status": "error", "message": "Document not initialized yet."})
         
     if not query.strip():
         return {"status": "success", "answer": "", "sources": []}
@@ -209,8 +125,6 @@ async def query_model(request: Request):
                 
         return {"status": "success", "answer": answer, "sources": sources_out}
     except Exception as e:
-        import traceback
-        traceback.print_exc()
         return JSONResponse({"status": "error", "message": str(e)})
 
 @app.get("/api/health")
@@ -218,5 +132,4 @@ async def health_check():
     return {"status": "ok", "model_loaded": QA_CHAIN is not None}
 
 if __name__ == "__main__":
-    print("Starting HTML interface backend...")
     uvicorn.run(app, host="127.0.0.1", port=8000)
