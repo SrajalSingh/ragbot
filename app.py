@@ -11,8 +11,7 @@ import uvicorn
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
@@ -20,7 +19,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 QA_CHAIN = None
 
-def initialize_retriever(file_path):
+def initialize_retriever(file_path, api_key):
     print(f"Loading document: {file_path}")
     loader = PyPDFLoader(file_path)
     loaded_doc = loader.load()
@@ -29,9 +28,12 @@ def initialize_retriever(file_path):
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
     chunks = splitter.split_documents(loaded_doc)
     
-    print("Creating local vector database using HuggingFaceEmbeddings...")
-    # This is 100% free and runs locally on Render CPU (uses only ~90MB memory)
-    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+    print("Creating cloud-based Google Generative AI embeddings...")
+    # This runs on Google's cloud for free, using virtually 0MB memory on Render!
+    embeddings = GoogleGenerativeAIEmbeddings(
+        model="models/text-embedding-004",
+        google_api_key=api_key
+    )
     vectordb = FAISS.from_documents(chunks, embeddings)
     
     retriever = vectordb.as_retriever(search_kwargs={"k": 3})
@@ -75,7 +77,7 @@ async def init_model(
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
             
-        retriever = initialize_retriever(file_path)
+        retriever = initialize_retriever(file_path, api_key)
         
         # Use Gemini 1.5 Flash (highly accurate, massive context, free)
         llm = ChatGoogleGenerativeAI(

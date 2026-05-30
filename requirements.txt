@@ -4,8 +4,6 @@ python-multipart
 langchain
 langchain-classic
 langchain-google-genai
-langchain-huggingface
-sentence-transformers
 langchain-community
 langchain-text-splitters
 pypdf
