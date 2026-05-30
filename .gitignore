@@ -1,8 +1,12 @@
 # Ignore everything
 *
 
-# Keep app.py and templates
+# Keep project files
 !app.py
 !templates/
 !templates/**
+!requirements.txt
+!Dockerfile
+!README.md
+!vercel.json
 !.gitignore
