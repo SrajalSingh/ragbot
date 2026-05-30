@@ -11,7 +11,8 @@ import uvicorn
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_community.vectorstores import FAISS
 from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
@@ -28,10 +29,9 @@ def initialize_retriever(file_path):
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
     chunks = splitter.split_documents(loaded_doc)
     
-    print("Creating in-memory vector database...")
-    # Using OpenAI embeddings
-    embeddings = OpenAIEmbeddings()
-    # Using FAISS in-memory so it works perfectly on Vercel/Render free tier without disk access
+    print("Creating local vector database using HuggingFaceEmbeddings...")
+    # This is 100% free and runs locally on Render CPU (uses only ~90MB memory)
+    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
     vectordb = FAISS.from_documents(chunks, embeddings)
     
     retriever = vectordb.as_retriever(search_kwargs={"k": 3})
@@ -60,10 +60,12 @@ async def init_model(
 ):
     global QA_CHAIN
     
-    if not os.environ.get("OPENAI_API_KEY"):
+    # Accept either GEMINI_API_KEY or GOOGLE_API_KEY
+    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    if not api_key:
         return JSONResponse({
             "status": "error", 
-            "message": "OPENAI_API_KEY environment variable is missing! Please add it in your Vercel/Render dashboard."
+            "message": "GEMINI_API_KEY environment variable is missing! Please get a free key from Google AI Studio and add it to your Render dashboard."
         })
         
     try:
@@ -75,8 +77,12 @@ async def init_model(
             
         retriever = initialize_retriever(file_path)
         
-        # Use GPT-3.5-Turbo (fast, cheap, works on cloud)
-        llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=temperature)
+        # Use Gemini 1.5 Flash (highly accurate, massive context, free)
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-1.5-flash", 
+            temperature=temperature,
+            google_api_key=api_key
+        )
 
         system_prompt = (
             "You are a precise, professional assistant. "
@@ -98,6 +104,8 @@ async def init_model(
         return {"status": "success", "message": f"Loaded: {file.filename}. Cloud AI Engine Ready!"}
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return JSONResponse({"status": "error", "message": str(e)})
 
 @app.post("/api/query")
@@ -134,3 +142,4 @@ async def health_check():
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)
+
