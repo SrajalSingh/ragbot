@@ -641,17 +641,6 @@
 
             <form id="init-form" aria-label="Model initialization">
                 <div class="form-group">
-                    <label for="model_type">Model Engine</label>
-                    <select id="model_type" name="model_type">
-                        <option value="GGUF">GGUF (llama.cpp)</option>
-                        <option value="HuggingFace">HuggingFace (Transformers)</option>
-                    </select>
-                </div>
-                <div class="form-group" style="margin-top:12px">
-                    <label for="model_path">Model Path or ID</label>
-                    <input type="text" id="model_path" name="model_path" placeholder="./models/model.gguf" required>
-                </div>
-                <div class="form-group" style="margin-top:12px">
                     <label for="file">PDF Document</label>
                     <input type="file" id="file" name="file" accept=".pdf" required>
                 </div>
@@ -659,11 +648,6 @@
                     <label for="temperature">Temperature <span id="temp-val">0.1</span></label>
                     <input type="range" id="temperature" name="temperature" min="0" max="2" step="0.1" value="0.1"
                         oninput="document.getElementById('temp-val').innerText=this.value">
-                </div>
-                <div class="form-group" style="margin-top:8px">
-                    <label for="max_tokens">Max Tokens <span id="tokens-val">512</span></label>
-                    <input type="range" id="max_tokens" name="max_tokens" min="128" max="4096" step="64" value="512"
-                        oninput="document.getElementById('tokens-val').innerText=this.value">
                 </div>
                 <button type="submit" class="btn-init" id="init-btn" style="margin-top:16px">
                     <span>Initialize Context &amp; Model</span>

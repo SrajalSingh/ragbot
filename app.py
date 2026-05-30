@@ -56,6 +56,7 @@ async def read_root():
 @app.post("/api/init")
 async def init_model(
     file: UploadFile = File(...),
+    temperature: float = Form(0.1),
 ):
     global QA_CHAIN
     
@@ -75,7 +76,7 @@ async def init_model(
         retriever = initialize_retriever(file_path)
         
         # Use GPT-3.5-Turbo (fast, cheap, works on cloud)
-        llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.1)
+        llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=temperature)
 
         system_prompt = (
             "You are a precise, professional assistant. "
